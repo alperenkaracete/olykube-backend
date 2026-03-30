@@ -1,0 +1,129 @@
+from fastapi import FastAPI, Depends, HTTPException
+from sqlalchemy.orm import Session
+from auth.hashing import hash_password, verify_password
+from auth.token import create_access_token
+from auth.token import get_current_user
+from fastapi import Request
+from services.rate_limiter import check_rate_limit
+from fastapi.responses import JSONResponse
+from core.logger import logger
+import time
+
+from models.user import UserRegister
+from services.user_service import get_user_by_email
+
+# Kendi yazdığımız dosyaları (modülleri) içeri alıyoruz
+import models
+import schemas
+from database import engine, SessionLocal
+
+# 1. BÜYÜK AN: Tabloları Yaratma Komutu
+# Bu satır, models.py içindeki sınıfları okur ve PostgreSQL'e gidip 
+# "Eğer 'todos' tablosu yoksa hemen CREATE TABLE ile yarat" der.
+models.Base.metadata.create_all(bind=engine)
+
+app = FastAPI()
+
+# 2. Veritabanı Oturumu (Session) Yönetimi
+# Her bir API isteği (Request) geldiğinde yeni bir veritabanı bağlantısı açar 
+# ve işlem bitince bağlantıyı güvenli bir şekilde kapatır.
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close() # C++'taki 'delete' veya destructor (yıkıcı) mantığı. Bellek sızıntısını (Memory Leak) önler!
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start_time = time.time() # Kronometreyi başlat
+    
+    # İsteği bir alt katmana (rate_limit_middleware'e) gönder ve cevabı bekle
+    response = await call_next(request)
+    
+    process_time = (time.time() - start_time) * 1000 # Kaç milisaniye sürdü?
+    
+    # Her nefesi logla (AIOps için altın değerinde veri)
+    logger.info(f"{request.client.host} - {request.method} {request.url.path} - Status: {response.status_code} - Süre: {process_time:.2f}ms")
+    
+    return response        
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    # K8s veya Load Balancer'ın sağlık kontrolüne sınırsız izin ver!
+    if request.url.path in ["/health", "/docs", "/openapi.json"]:
+        return await call_next(request)
+    ip = request.client.host
+    if not check_rate_limit(ip):
+        logger.warning(f"RATE LIMIT AŞILDI! Olası DDOS veya Spam. IP: {ip}")
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Çok fazla istek attınız, 1 dakika bekleyin."}
+        )
+    response = await call_next(request)
+    return response
+
+# Test için basit bir kök dizin
+@app.get("/")
+def read_root():
+    return {"message": "Veritabanı bağlantısı başarılı ve fabrika çalışıyor!"}
+
+@app.post("/todos/", response_model=schemas.TodoResponse)
+def create_todo(todo: schemas.TodoCreate, db: Session = Depends(get_db)):
+    # 1. Kullanıcıdan gelen tertemiz Pydantic verisini, SQLAlchemy veritabanı objesine çevir
+    db_todo = models.Todo(title=todo.title, description=todo.description)
+    # 2. Objekti veritabanı oturumuna ekle (Henüz diske yazılmadı, RAM'de bekliyor)
+    db.add(db_todo)
+    # 3. Değişiklikleri onayla ve kalıcı olarak diske (PostgreSQL) yaz! (C++'taki fflush veya commit gibi)
+    db.commit()
+    # 4. Veritabanının atadığı yeni ID'yi almak için objeyi yenile
+    db.refresh(db_todo)
+    # 5. Kaydedilen veriyi kullanıcıya geri döndür
+    return db_todo
+
+@app.get("/todos/", response_model=list[schemas.TodoResponse])
+def read_todos(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    # Veritabanına "Bana Todo tablosundaki tüm kayıtları getir" diyoruz.
+    # offset(skip) ve limit(limit) kısımları binlerce veri olduğunda RAM'in çökmesini engeller.
+    todos = db.query(models.Todo).offset(skip).limit(limit).all()
+    return todos  
+    
+@app.get("/todos/{todo_id}", response_model=schemas.TodoResponse)
+def read_todo(todo_id: int, db: Session = Depends(get_db)):
+    # SQL karşılığı: SELECT * FROM todos WHERE id = todo_id LIMIT 1;
+    todo = db.query(models.Todo).filter(models.Todo.id == todo_id).first()
+    
+    # Eğer veritabanında o ID'ye ait bir kayıt yoksa (pointer null dönüyorsa)
+    if todo is None:
+        raise HTTPException(status_code=404, detail="Böyle bir Todo bulunamadı!")
+        
+    return todo    
+
+@app.post("/register")
+def register(user: UserRegister, db: Session = Depends(get_db)):
+    existing_user = get_user_by_email(db, user.email)
+    if existing_user :
+        raise HTTPException(status_code=400, detail="Bu email zaten kayıtlı")
+    else :
+        hashed_pw = hash_password(user.password)
+        db_user = models.User(email = user.email, hashed_password = hashed_pw)       
+        db.add(db_user)
+        db.commit()
+        db.refresh(db_user)
+        return db_user
+
+@app.post("/login")
+def login(user: UserRegister, db: Session = Depends(get_db)):
+    existing_user = get_user_by_email(db, user.email)
+    if not existing_user:
+        raise HTTPException(status_code=404, detail="Email bulunamadı")
+    
+    if not verify_password(user.password, existing_user.hashed_password):
+        raise HTTPException(status_code=401, detail="Yanlış şifre")
+    
+    token = create_access_token(data={"sub": existing_user.email})
+    return {"access_token": token, "token_type": "bearer"}      
+
+@app.get("/protected")
+def protected(current_user = Depends(get_current_user)):
+    return {"email": current_user}

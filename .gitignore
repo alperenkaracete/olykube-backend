@@ -1,0 +1,12 @@
+# Python geçici dosyaları
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Sanal Ortam
+venv/
+env/
+
+# Loglar ve Veritabanı
+*.log
+*.sqlite3
