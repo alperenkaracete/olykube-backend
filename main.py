@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from auth.hashing import hash_password, verify_password
 from auth.token import create_access_token
 from auth.token import get_current_user
@@ -127,3 +128,61 @@ def login(user: UserRegister, db: Session = Depends(get_db)):
 @app.get("/protected")
 def protected(current_user = Depends(get_current_user)):
     return {"email": current_user}
+
+@app.post("/agents/", response_model = schemas.AgentCreate)
+def create_agents(agent : schemas.AgentCreate,db: Session = Depends(get_db)):
+    db_agent = models.Agent(**agent.model_dump())
+    try:
+        db.add(db_agent)
+        db.commit() # PostgreSQL'in UNIQUE duvarına çarptığı an burasıdır!
+        db.refresh(db_agent)
+        return db_agent
+            
+    except IntegrityError:
+        # ÇOK KRİTİK: Eğer hata alırsak, RAM'deki o hatalı işlemi geri almalıyız.
+        # Yoksa veritabanı oturumu (Session) zehirlenir ve sonraki istekler de çöker.
+        db.rollback() 
+        
+        # Kullanıcıya 500 yerine, şık bir 400 Bad Request dönüyoruz:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"'{agent.name}' isminde bir ajan zaten mevcut. Lütfen farklı bir isim seçin."
+        )
+
+@app.get("/agents/name/{agent_name}", response_model=schemas.AgentResponse)
+def get_agent_by_name(agent_name: str, db: Session = Depends(get_db)):
+    db_agent = db.query(models.Agent).filter(models.Agent.name == agent_name).first()
+    
+    if not db_agent:
+        raise HTTPException(status_code=404, detail="Bu isimde bir ajan bulunamadı!")
+        
+    return db_agent
+
+@app.get("/agents/{agent_id}", response_model=schemas.AgentResponse)
+def get_agent_by_id(agent_id: int, db: Session = Depends(get_db)):
+    db_agent = db.query(models.Agent).filter(models.Agent.id == agent_id).first()
+    
+    if not db_agent:
+        raise HTTPException(status_code=404, detail="Ajan bulunamadı!")
+        
+    return db_agent
+
+@app.get("/agents/", response_model=list[schemas.AgentResponse])
+def get_all_agents(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    agents = db.query(models.Agent).offset(skip).limit(limit).all()
+    return agents 
+
+@app.delete("/agents/")
+def delete_agent(agent_name: str, db: Session = Depends(get_db)):
+    # 1. Önce silinecek hedefi ismine göre bul
+    db_agent = db.query(models.Agent).filter(models.Agent.name == agent_name).first()
+    
+    # 2. Eğer hedef yoksa 404 fırlat
+    if not db_agent:
+        raise HTTPException(status_code=404, detail="Silinecek ajan bulunamadı!")
+        
+    # 3. Hedefi veritabanından sil ve diske yaz (Commit)
+    db.delete(db_agent)
+    db.commit()
+    
+    return {"message": f"'{db_agent.name}' isimli ajan (ID: {db_agent.id}) sistemden başarıyla silindi."}

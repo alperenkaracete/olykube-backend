@@ -1,4 +1,5 @@
-from sqlalchemy import Boolean, Column, Integer, String
+from sqlalchemy import Boolean, Column, Integer, String, DateTime, Text
+from sqlalchemy.sql import func
 from database import Base # Az önce yazdığımız Base sınıfını içeri alıyoruz
 
 class Todo(Base):
@@ -17,3 +18,14 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, index=True)
     hashed_password = Column(String)    
+
+class Agent(Base):
+    __tablename__ = "agents"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True, nullable=False)
+    description = Column(String, nullable=True)
+    system_prompt = Column(Text, nullable=False)
+    model_name = Column(String, default="llama3") # Varsayılan bir model atayabilirsin
+    status = Column(String, default="idle")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())    
