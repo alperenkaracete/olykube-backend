@@ -8,6 +8,10 @@ Format [Keep a Changelog](https://keepachangelog.com/tr/1.0.0/) standardına day
 ## [0.1.0] - 2026-03-30
 
 ### Eklenenler (Added)
+- **AI Engine Integration:** Entegre LangGraph otonom ajan mimarisi (`create_react_agent`).
+- **Dynamic Chat Endpoint:** Kullanıcıların ajanlarla spesifik kimliklerine (`system_prompt`) göre konuşabilmesini sağlayan `POST /agents/{agent_id}/chat` uç noktası.
+- **Web Search Tool:** Ajanlara internet üzerinden gerçek zamanlı veri çekme ve araştırma yapma yeteneği kazandıran Tavily API entegrasyonu.
+- **Fail-Fast Health Check:** Ollama servisi kapalıyken API'nin kilitlenmesini önleyen ve anında `503 Service Unavailable` dönen asenkron ping mekanizması.
 - Kapsamlı proje klasör mimarisi (core, services, models, auth).
 - PostgreSQL veritabanı bağlantısı ve ORM (SQLAlchemy) altyapısı.
 - Redis tabanlı rate limiting middleware.

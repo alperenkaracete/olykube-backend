@@ -34,3 +34,7 @@ class AgentResponse(AgentBase):
 
     class Config:
         from_attributes = True # Çok Kritik: SQLAlchemy objesini JSON'a çeviren sihirli köprü!
+
+class ChatRequest(BaseModel):
+    message: str
+    thread_id: str = "default_session" # Hafıza takibi için        

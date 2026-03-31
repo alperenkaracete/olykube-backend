@@ -5,10 +5,12 @@ from auth.hashing import hash_password, verify_password
 from auth.token import create_access_token
 from auth.token import get_current_user
 from fastapi import Request
+from services.agents_service import run_agent_chat
 from services.rate_limiter import check_rate_limit
 from fastapi.responses import JSONResponse
 from core.logger import logger
 import time
+import traceback
 
 from models.user import UserRegister
 from services.user_service import get_user_by_email
@@ -186,3 +188,30 @@ def delete_agent(agent_name: str, db: Session = Depends(get_db)):
     db.commit()
     
     return {"message": f"'{db_agent.name}' isimli ajan (ID: {db_agent.id}) sistemden başarıyla silindi."}
+
+@app.post("/agents/{agent_id}/chat")
+async def chat_with_agent(agent_id: int, request: schemas.ChatRequest, db: Session = Depends(get_db)):
+    # 1. Veritabanından ajanı çek (Ajanın kimliğini burada öğreniyoruz)
+    db_agent = db.query(models.Agent).filter(models.Agent.id == agent_id).first()
+    if not db_agent:
+        raise HTTPException(status_code=404, detail="Ajan bulunamadı!")
+    try:
+        # 2. Servisi çağır ve yanıtı bekle
+        # (Şu an senkron bekliyoruz, 10. haftada Celery ile bunu asenkrona çekeceğiz)
+        response_content = await run_agent_chat(
+            model_name=db_agent.model_name,
+            system_prompt=db_agent.system_prompt,
+            user_message=request.message,
+            thread_id=request.thread_id
+        )
+        
+        return {
+            "agent_name": db_agent.name,
+            "response": response_content
+        }
+    except Exception as e:
+        # Yapay zeka tarafında oluşabilecek hataları yakalıyoruz
+        print("--- KRİTİK HATA DETAYI ---")
+        traceback.print_exc() 
+        print("--------------------------")
+        raise HTTPException(status_code=500, detail=f"Ajan yanıt verirken bir hata oluştu: {str(e)}")
