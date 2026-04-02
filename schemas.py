@@ -38,3 +38,7 @@ class AgentResponse(AgentBase):
 class ChatRequest(BaseModel):
     message: str
     thread_id: str = "default_session" # Hafıza takibi için        
+
+class IngestRequest(BaseModel):
+    text: str
+    doc_id: str    

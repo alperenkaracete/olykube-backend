@@ -10,3 +10,6 @@ env/
 # Loglar ve Veritabanı
 *.log
 *.sqlite3
+
+# Todo
+Todo

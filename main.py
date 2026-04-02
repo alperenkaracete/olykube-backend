@@ -6,11 +6,14 @@ from auth.token import create_access_token
 from auth.token import get_current_user
 from fastapi import Request
 from services.agents_service import run_agent_chat
+from services.chat_history_service import save_chat_history, get_chat_history
 from services.rate_limiter import check_rate_limit
 from fastapi.responses import JSONResponse
 from core.logger import logger
+from services.ingest_service import ingest_document
 import time
 import traceback
+
 
 from models.user import UserRegister
 from services.user_service import get_user_by_email
@@ -193,6 +196,7 @@ def delete_agent(agent_name: str, db: Session = Depends(get_db)):
 async def chat_with_agent(agent_id: int, request: schemas.ChatRequest, db: Session = Depends(get_db)):
     # 1. Veritabanından ajanı çek (Ajanın kimliğini burada öğreniyoruz)
     db_agent = db.query(models.Agent).filter(models.Agent.id == agent_id).first()
+    
     if not db_agent:
         raise HTTPException(status_code=404, detail="Ajan bulunamadı!")
     try:
@@ -204,7 +208,16 @@ async def chat_with_agent(agent_id: int, request: schemas.ChatRequest, db: Sessi
             user_message=request.message,
             thread_id=request.thread_id
         )
-        
+        # Geçmişi kaydet
+        save_chat_history(
+            db=db,
+            agent_id=agent_id,
+            thread_id=request.thread_id,
+            messages=[
+                {"role": "user", "content": request.message},
+                {"role": "assistant", "content": response_content}
+            ]
+        )        
         return {
             "agent_name": db_agent.name,
             "response": response_content
@@ -215,3 +228,21 @@ async def chat_with_agent(agent_id: int, request: schemas.ChatRequest, db: Sessi
         traceback.print_exc() 
         print("--------------------------")
         raise HTTPException(status_code=500, detail=f"Ajan yanıt verirken bir hata oluştu: {str(e)}")
+    
+@app.post("/ingest")
+def ingest(request: schemas.IngestRequest):
+    chunk_count = ingest_document(request.text, request.doc_id)
+    return {"message": f"{chunk_count} chunk kaydedildi.", "doc_id": request.doc_id}    
+
+@app.get("/agents/{agent_id}/history/{thread_id}")
+def get_history(agent_id: int, thread_id: str, db: Session = Depends(get_db)):
+    history = get_chat_history(db, agent_id, thread_id)
+    
+    if not history:
+        raise HTTPException(status_code=404, detail="Bu thread'e ait geçmiş bulunamadı.")
+    
+    return {
+        "agent_id": agent_id,
+        "thread_id": thread_id,
+        "messages": history
+    }

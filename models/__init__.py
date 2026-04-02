@@ -1,1 +1,1 @@
-from .models import Base, Todo, User, Agent
+from .models import Base, Todo, User, Agent, ChatHistory

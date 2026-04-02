@@ -1,6 +1,7 @@
 from sqlalchemy import Boolean, Column, Integer, String, DateTime, Text
 from sqlalchemy.sql import func
 from database import Base # Az önce yazdığımız Base sınıfını içeri alıyoruz
+from sqlalchemy import JSON
 
 class Todo(Base):
     # 1. Tablo Adı: Veritabanında (PostgreSQL içinde) bu tablonun adı ne olacak?
@@ -29,3 +30,12 @@ class Agent(Base):
     model_name = Column(String, default="llama3") # Varsayılan bir model atayabilirsin
     status = Column(String, default="idle")
     created_at = Column(DateTime(timezone=True), server_default=func.now())    
+
+class ChatHistory(Base):    
+    __tablename__ = "chat_histories"
+
+    id = Column(Integer, primary_key=True, index=True)
+    agent_id = Column(Integer, index=True, nullable=False)
+    thread_id = Column(String, index=True)
+    messages = Column(JSON)
+    created_at = Column(String, default="")    
