@@ -1,7 +1,10 @@
 import redis
 from fastapi import HTTPException
+import os
 
-r = redis.Redis(host="localhost", port=6379, db=0)
+redis_host = os.getenv("REDIS_HOST", "host.docker.internal")
+
+r = redis.Redis(host=redis_host, port=6379, db=0)
 
 def check_rate_limit(identifier: str)-> bool:
     key = f"rate_limit:{identifier}"

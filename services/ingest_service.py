@@ -1,8 +1,5 @@
-import chromadb
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-
-chroma_client = chromadb.PersistentClient(path="./chroma_db")
-collection = chroma_client.get_or_create_collection("olykube_docs")
+from services.chroma_client import collection
 
 splitter = RecursiveCharacterTextSplitter(
     chunk_size=200,

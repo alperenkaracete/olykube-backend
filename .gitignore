@@ -2,10 +2,12 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyc
 
 # Sanal Ortam
 venv/
 env/
+.venv/
 
 # Loglar ve Veritabanı
 *.log
@@ -13,3 +15,15 @@ env/
 
 # Todo
 Todo
+Dockerfile
+.dockerignore
+.env
+
+# Veritabanı ve Önbellek Hacimleri (Eğer lokalde tutuluyorsa)
+chroma_cache/
+local_chroma_data/
+postgres_data/
+
+# İşletim Sistemi Dosyaları
+.DS_Store
+Thumbs.db

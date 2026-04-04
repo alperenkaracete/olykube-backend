@@ -10,6 +10,7 @@ from fastapi import HTTPException
 import chromadb
 from langchain_core.tools import tool
 from database import SQLALCHEMY_DATABASE_URL
+from services.chroma_client import collection
 
 # Tavily anahtarını çevresel değişkenlerden okumak en sağlıklısıdır
 os.environ["TAVILY_API_KEY"] = "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"
@@ -45,6 +46,7 @@ async def run_agent_chat(model_name: str, system_prompt: str, user_message: str,
             tools, 
             checkpointer=checkpointer,
             system_prompt=system_prompt,
+            debug=True
         )
 
         config = {"configurable": {"thread_id": thread_id}}

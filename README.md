@@ -38,7 +38,7 @@ cp .env.example .env
 ```
 İçini doldur:
 ```
-DATABASE_URL=postgresql://kullanici:sifre@localhost:5432/todo_db
+SQLALCHEMY_DATABASE_URL=postgresql://kullanici:sifre@localhost:5432/todo_db
 SECRET_KEY=gizli-anahtar
 ```
 
