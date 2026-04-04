@@ -246,3 +246,7 @@ def get_history(agent_id: int, thread_id: str, db: Session = Depends(get_db)):
         "thread_id": thread_id,
         "messages": history
     }
+
+@app.get("/health", tags=["System"])
+async def health_check():
+    return {"status": "ok"}

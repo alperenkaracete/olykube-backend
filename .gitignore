@@ -15,7 +15,6 @@ env/
 
 # Todo
 Todo
-Dockerfile
 .dockerignore
 .env
 
