@@ -16,7 +16,7 @@ tools = [search_tool]
 # 2. Motoru (Beyni) Tanımla
 llm = ChatOllama(
     model="qwen3.5:9b", # Qwen, araç kullanma (Tool Calling) konusunda çok zekidir
-    base_url="http://192.168.1.6:11434"
+    base_url="http://192.168.1.13:11434"
 )
 
 # 3. LangGraph ReAct Ajanını Derle (Sihir Burada Gerçekleşiyor)

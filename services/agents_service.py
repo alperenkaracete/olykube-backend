@@ -22,7 +22,7 @@ async def run_agent_chat(model_name: str, system_prompt: str, user_message: str,
     # 0. Ollama Health Check
     try:
         async with httpx.AsyncClient() as client:
-            await client.get("http://192.168.1.6:11434/", timeout=2.0)
+            await client.get("http://192.168.1.13:11434/", timeout=2.0)
     except httpx.RequestError:
         raise HTTPException(
             status_code=503, 
@@ -38,7 +38,7 @@ async def run_agent_chat(model_name: str, system_prompt: str, user_message: str,
         
         llm = ChatOllama(
             model=model_name,
-            base_url="http://192.168.1.6:11434"
+            base_url="http://192.168.1.13:11434"
         )
 
         agent_app = create_agent(
@@ -58,7 +58,14 @@ async def run_agent_chat(model_name: str, system_prompt: str, user_message: str,
 
 @tool
 def search_knowledge_base(query: str) -> str:
-    """Yerel bilgi tabanında arama yapar. Önce buraya bak."""
+    """
+    OlyKube projesi, sistem konfigürasyonları, Docker logoları ve projeye özel tüm terimler (örn: xxxyyyzzz) için YEREL BİLGİ TABANINDA arama yapar.
+    
+    KESİN KURALLAR:
+    1. Kullanıcı ne sorarsa sorsun İLK OLARAK bu aracı kullanacaksın.
+    2. 'query' parametresini oluştururken kullanıcının verdiği orijinal kelimeleri ASLA DEĞİŞTİRME. 
+    3. Sorguya "görsel, tasarım, arayüz, proje" gibi ekstra kelimeler veya yorumlar EKLEME. Sadece kullanıcının sorduğu yalın haliyle ara.
+    """
     results = collection.query(
         query_texts=[query],
         n_results=2

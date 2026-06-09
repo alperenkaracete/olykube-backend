@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: olykube-api-deployment
+  labels:
+    app: olykube-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: olykube-api
+  template:
+    metadata:
+      labels:
+        app: olykube-api
+    spec:
+      containers:
+      - name: olykube-container
+        image: olykube-api:v3
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8000
+        envFrom:
+        - secretRef:
+            name: olykube-env
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: olykube-api-service
+spec:
+  selector:
+    app: olykube-api
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8000
+  type: ClusterIP

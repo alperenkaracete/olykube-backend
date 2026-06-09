@@ -3,7 +3,7 @@ from langchain_core.prompts import ChatPromptTemplate
 
 llm = ChatOllama(
     model="qwen3.5:9b",
-    base_url="http://192.168.1.6:11434"
+    base_url="http://192.168.1.13:11434"
 )
 
 response = llm.invoke("İyiyim ben de ne var ne yok?")
