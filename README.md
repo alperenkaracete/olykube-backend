@@ -1,114 +1,255 @@
 # OlyKube AI Platform 🚀
 
-Otonom ajanlar ve AIOps süreçleri için tasarlanmış; LangGraph ve RAG (Retrieval-Augmented Generation) destekli, tamamen konteynerize edilmiş yüksek performanslı yapay zeka backend servisi. 
+[![Tests](https://github.com/alperenkaracete/olykube-backend/actions/workflows/tests.yml/badge.svg)](https://github.com/alperenkaracete/olykube-backend/actions/workflows/tests.yml)
 
-Bu proje, yerel LLM modellerini (Ollama/Qwen) yönetmek ve ileride Kubernetes üzerinde dinamik "resource-aware" ajan pod'ları (Agent-per-Pod) oluşturmak için bir altyapı sunar.
+Otonom ajanlar ve AIOps süreçleri için geliştirilen, LangGraph ve RAG (Retrieval-Augmented Generation) destekli, konteynerize bir yapay zeka backend servisi.
 
-## 🛠 Teknoloji Yığını (Tech Stack)
+Ajanlar yerel LLM'ler (Ollama) üzerinde çalışır; hataları teşhis etmek için yerel bilgi tabanında (ChromaDB) ve internette (Tavily) arama yapar, çözdükleri hataları bilgi tabanına geri yazarak zamanla "öğrenir". Uzun vadeli hedef, Kubernetes üzerinde her ajan için dinamik ve kaynak-farkındalıklı pod'lar (Agent-per-Pod) oluşturmaktır; bkz. [Durum / Yol Haritası](#-durum--yol-haritası).
 
-* **Backend Framework:** FastAPI (Python 3.11)
-* **AI & Orkestrasyon:** LangChain, LangGraph, Ollama (Yerel LLM)
-* **RAG & Vektör Arama:** ChromaDB, Tavily (Web Search API)
-* **Kalıcı Veritabanı:** PostgreSQL 15 (SQLAlchemy ORM, Ajan Geçmişi & Metadata)
-* **Önbellek & Rate Limit:** Redis
-* **Konteynerizasyon:** Docker, Docker Compose (Multi-stage build, Health Checks)
-* **Güvenlik:** JWT Authentication, Pydantic Schema Validation, Non-root Container Execution
+## 🛠 Teknoloji Yığını
 
-## 🏗️ Mimari (Microservices)
+* **Backend:** FastAPI (Python 3.11)
+* **AI & Orkestrasyon:** LangChain, LangGraph, Ollama (yerel LLM)
+* **RAG & Arama:** ChromaDB (vektör veritabanı), Tavily (web arama)
+* **Veritabanı:** PostgreSQL 15 (SQLAlchemy ORM + LangGraph `AsyncPostgresSaver` ile kalıcı ajan hafızası)
+* **Rate Limiting:** Redis
+* **Konteyner & Orkestrasyon:** Docker (multi-stage build, non-root kullanıcı, healthcheck), Docker Compose, Kubernetes (kind + Cilium)
+* **Güvenlik:** JWT (OAuth2 password flow), bcrypt, Pydantic doğrulama
 
-Sistem `olykube-network` isimli izole bir bridge ağı üzerinde, birbirleriyle doğrudan DNS isimleriyle haberleşen 4 ana servisten oluşur:
-1. `olykube-api`: LangGraph ajan mantığını, yönlendirmeleri ve RAG pipeline'ını yöneten ana backend.
-2. `olykube-db`: İlişkisel verileri (Kullanıcılar, Ajan metadataları, sohbet geçmişleri) tutar (Stateful/Volume).
-3. `olykube-redis`: Hız limiti (Rate Limiting) ve token doğrulama işlemleri için kullanılır.
-4. `olykube-chromadb`: Döküman embedding'leri için bağımsız vektör veritabanı sunucusu (Stateful/Volume).
+## 🏗️ Mimari
+
+| Servis | Görev |
+|---|---|
+| `olykube-api` | FastAPI uygulaması: kimlik doğrulama, ajan yönetimi, LangGraph ajan çalıştırma, RAG ingest |
+| `olykube-db` | PostgreSQL: kullanıcılar, ajanlar, sohbet geçmişi ve LangGraph checkpoint'leri (volume ile kalıcı) |
+| `olykube-redis` | IP bazlı rate limiting sayaçları |
+| `olykube-chromadb` | Döküman ve öğrenilmiş çözümlerin embedding'leri (volume ile kalıcı) |
+| Ollama (host'ta) | LLM motoru; konteynerlerin dışında, host makinede çalışır |
+
+### AIOps Ajanı
+
+`POST /agents/{id}/chat` çağrıldığında ajan şu araçlarla bir ReAct döngüsü çalıştırır:
+
+| Araç | Ne yapar |
+|---|---|
+| `fetch_service_logs` | Servis loglarını getirir. **Şu an sabit (mock) veri döner**; gerçek K8s log entegrasyonu planlanıyor |
+| `search_knowledge_base` | ChromaDB'de arama yapar, sonuçları `[source: ...]` atfıyla döner |
+| `search_web_for_error` | Yerelde çözüm yoksa Tavily ile internette arar |
+| `save_error_solution` | Çözülen hatayı ChromaDB'ye yazar; sistem sonraki seferde aynı hatayı yerelden bulur |
+
+- Ajanın talimatı, ortak DevOps iş akışı ile ajanın kendi `system_prompt`'unun birleşimidir; LLM olarak ajanın `model_name` alanındaki Ollama modeli kullanılır.
+- Konuşma hafızası `thread_id` bazında PostgreSQL'de tutulur (LangGraph checkpointer).
+- Ollama'ya ulaşılamazsa ajan hiç başlatılmaz, istek `503` ile döner.
+- Yanıt, son cevabın yanında ajanın çağırdığı araçları (`actions_taken`), kullandığı kaynakları (`cited_sources`) ve yeni bilgi kaydedip kaydetmediğini (`new_knowledge_saved`) içerir.
 
 ## ⚙️ Kurulum ve Çalıştırma
 
-Bu projeyi çalıştırmak için iki farklı yöntem tercih edebilirsiniz: İzolasyon ve kolaylık sağlayan **Docker (Önerilen)** yöntemi veya geliştirme aşamasında esneklik sağlayan **Yerel (Manuel) Kurulum** yöntemi.
+Tüm yöntemler için önce ortam değişkenlerini hazırlayın:
 
-### Yöntem 1: Docker ile Çalıştırma (Önerilen)
-Bu yöntem sisteminizde gereksiz paket kirliliği yaratmaz ve tüm mimariyi (Veritabanı, Redis, API) tek komutla izole bir ağda ayağa kaldırır.
-
-**Gereksinimler:** Docker, Docker Compose ve host makinede kurulu Ollama.
-
-**1. Ortam Değişkenlerini Ayarlayın**
-`.env.example` dosyasını kopyalayarak `.env` oluşturun:
 ```bash
 cp .env.example .env
 ```
-*(Not: `.env` dosyasındaki veritabanı host isimlerinin Docker servis adlarıyla (örn: `olykube-db`) ve Ollama adresinin `http://host.docker.internal:11434` şeklinde ayarlandığından emin olun.)*
 
-**2. Konteynerleri Başlatın**
-Projeyi çok aşamalı (multi-stage) build mimarisiyle başlatmak için:
+| Değişken | Zorunlu | Açıklama |
+|---|---|---|
+| `SQLALCHEMY_DATABASE_URL` | ✅ | PostgreSQL bağlantı adresi |
+| `SECRET_KEY` | ✅ | JWT imzalama anahtarı. Üretmek için: `python -c "import secrets; print(secrets.token_hex(32))"` |
+| `TAVILY_API_KEY` | Web araması için | [tavily.com](https://tavily.com) API anahtarı |
+| `OLLAMA_BASE_URL` | | Varsayılan `http://localhost:11434` |
+| `REDIS_HOST` / `REDIS_PORT` | | Varsayılan `localhost` / `6379` |
+| `CHROMA_HOST` / `CHROMA_PORT` | | Varsayılan `chromadb` / `8000` |
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | Compose için | `olykube-db` konteyneri bu değerlerle kurulur |
+
+Zorunlu bir değişken eksikse uygulama açılışta hangi değişkenin eksik olduğunu söyleyerek durur. `.env` dosyası git'e eklenmez; sırları yalnızca orada tutun.
+
+Ajanın kullanacağı modeli Ollama'ya önceden indirin (ajanların varsayılan modeli `llama3`):
+
+```bash
+ollama pull llama3
+```
+
+### Yöntem 1: Docker Compose (Önerilen)
+
+**Gereksinimler:** Docker, Docker Compose ve host makinede çalışan Ollama.
+
+`.env.example` içindeki değerler Compose'a göre hazırdır (host adları konteyner adlarıdır, Ollama `http://host.docker.internal:11434`).
+
 ```bash
 docker compose up -d --build
 ```
-*Tüm servisler ayağa kalktığında `docker ps` komutu ile `(healthy)` durumlarını doğrulayabilirsiniz. API `http://localhost:8000` adresinde yayında olacaktır.*
 
----
+API `http://localhost:8000` adresinde, Swagger UI `http://localhost:8000/docs` adresinde açılır. `olykube-api` konteyneri `/health` üzerinden healthcheck yapar; durumunu `docker ps` ile `(healthy)` olarak görebilirsiniz (diğer servislerde henüz healthcheck tanımlı değildir).
 
 ### Yöntem 2: Yerel (Manuel) Kurulum
-Kodu doğrudan kendi makinenizde (örneğin WSL/Ubuntu üzerinde) derleyip, anlık geliştirme (hot-reload) yapmak isterseniz bu adımları izleyebilirsiniz.
 
-**Gereksinimler:** Python 3.11+, PostgreSQL, Redis ve Ollama.
+**Gereksinimler:** Python 3.11+, PostgreSQL, Ollama ve bir ChromaDB sunucusu. Redis opsiyoneldir: erişilemezse rate limiting geçici olarak devre dışı kalır, istekler engellenmez.
 
-**1. Arka Plan Servislerini Başlatın**
-Sisteminizdeki PostgreSQL ve Redis sunucularının çalışır durumda olduğundan emin olun:
 ```bash
-sudo service redis-server start
-sudo service postgresql start
-```
+# ChromaDB sunucusu (API ile çakışmaması için 8001 portunda)
+docker run -d -p 8001:8000 chromadb/chroma
 
-**2. Sanal Ortam ve Bağımlılıkları Kurun**
-```bash
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-**3. Ortam Değişkenlerini Ayarlayın**
-```bash
-cp .env.example .env
-```
-`.env` dosyasındaki bağlantı adreslerini **localhost**'a göre güncelleyin:
+`.env` içindeki host'ları yerel ortama göre güncelleyin:
+
 ```ini
-SQLALCHEMY_DATABASE_URL=postgresql://kullanici:sifre@localhost:5432/olykube_db
-REDIS_URL=redis://localhost:6379
+SQLALCHEMY_DATABASE_URL=postgresql://kullanici:sifre@localhost:5432/olykube
+REDIS_HOST=localhost
+CHROMA_HOST=localhost
+CHROMA_PORT=8001
 OLLAMA_BASE_URL=http://localhost:11434
 ```
 
-**4. Uygulamayı Başlatın**
 ```bash
 uvicorn main:app --reload
 ```
-*API canlı yenileme özelliğiyle `http://localhost:8000` adresinde çalışmaya başlayacaktır.*
+
+Uygulama `.env` dosyasını otomatik okur.
+
+### Yöntem 3: Kubernetes (kind + Cilium)
+
+Manifest'ler `k8s/` klasöründedir:
+
+| Dosya | İçerik |
+|---|---|
+| `k8s/kind-cilium-config.yaml` | Varsayılan CNI'ı kapatan kind cluster tanımı (Cilium sonradan kurulur) |
+| `k8s/infrastructure-deployment.yaml` | PostgreSQL (`db`) ve Redis (`redis`) Deployment + Service |
+| `k8s/chromadb-deployment.yaml` | ChromaDB (`chromadb`) Deployment + Service |
+| `k8s/api-deployment.yaml` | API Deployment (2 replika) + ClusterIP Service (`olykube-api-service`, port 80 → 8000) |
+
+**1. Cluster'ı kurun ve Cilium'u yükleyin** ([cilium CLI](https://docs.cilium.io/en/stable/gettingstarted/k8s-install-default/) gerekir):
+
+```bash
+kind create cluster --config k8s/kind-cilium-config.yaml
+cilium install
+cilium status --wait
+```
+
+**2. API image'ını build edip cluster'a yükleyin.** Tag, `k8s/api-deployment.yaml` içindeki `image` alanıyla aynı olmalıdır:
+
+```bash
+docker build -t olykube-api:v3 .
+kind load docker-image olykube-api:v3
+```
+
+**3. Ortam değişkenlerini Secret olarak oluşturun.** API pod'u tüm değişkenleri `olykube-env` Secret'ından alır. Cluster içi için ayrı bir env dosyası hazırlayın (örn. `.env.k8s`, git'e eklemeyin); host adları Service adlarıdır:
+
+```ini
+SQLALCHEMY_DATABASE_URL=postgresql://postgres:<şifre>@db:5432/olykube
+REDIS_HOST=redis
+CHROMA_HOST=chromadb
+OLLAMA_BASE_URL=http://<host-makinenin-IP-adresi>:11434
+SECRET_KEY=...
+TAVILY_API_KEY=...
+```
+
+```bash
+kubectl create secret generic olykube-env --from-env-file=.env.k8s
+```
+
+**4. Servisleri ayağa kaldırın ve API'ye erişin:**
+
+```bash
+kubectl apply -f k8s/infrastructure-deployment.yaml -f k8s/chromadb-deployment.yaml
+kubectl apply -f k8s/api-deployment.yaml
+kubectl port-forward svc/olykube-api-service 8000:80
+```
+
+> **Bilinen kısıtlar:** Manifest'lerde henüz PersistentVolume yoktur (pod yeniden başlarsa PostgreSQL ve ChromaDB verisi kaybolur), liveness/readiness probe tanımlı değildir ve PostgreSQL şifresi `infrastructure-deployment.yaml` içinde düz metindir. Bunlar yol haritasındadır.
+
+## 📡 API Endpoint'leri
+
+Tüm endpoint'leri `http://localhost:8000/docs` (Swagger UI) üzerinden deneyebilirsiniz. Korumalı endpoint'ler için Swagger'daki **Authorize** butonuna e-posta (username alanına) ve şifrenizi girmeniz yeterlidir.
+
+### 🔐 Kimlik Doğrulama & Sistem
+
+| Method | Endpoint | Açıklama | Auth |
+|---|---|---|---|
+| POST | `/register` | Yeni kullanıcı kaydı. Gövde: `{"email", "password"}` | Hayır |
+| POST | `/login` | JWT token al (30 dk geçerli). JSON `{"email", "password"}` veya form `username` / `password` kabul eder | Hayır |
+| GET | `/health` | Sağlık kontrolü, `{"status": "ok"}` döner | Hayır |
+| GET | `/protected` | Token'ın sahibi olan kullanıcının e-postasını döner | Evet |
+
+### 🤖 Ajan İşlemleri
+
+| Method | Endpoint | Açıklama | Auth |
+|---|---|---|---|
+| POST | `/agents/` | Ajan oluştur. Gövde: `name`, `system_prompt`, opsiyonel `description`, `model_name` (varsayılan `llama3`). Aynı isim tekrar kullanılırsa `400` | Evet |
+| GET | `/agents/` | Ajanları listele (`?skip=0&limit=100`) | Evet |
+| GET | `/agents/{agent_id}` | ID ile ajan getir | Evet |
+| GET | `/agents/name/{agent_name}` | İsim ile ajan getir | Evet |
+| DELETE | `/agents/?agent_name=<isim>` | Ajanı isme göre sil | Evet |
+| POST | `/agents/{agent_id}/chat` | Ajanla konuş. Gövde: `{"message", "thread_id"}` (`thread_id` varsayılan `default_session`) | Evet |
+| GET | `/agents/{agent_id}/history/{thread_id}` | Thread'in kayıtlı sohbet geçmişi (şu an yalnızca son soru-cevap çifti saklanır) | Evet |
+
+### 📚 RAG
+
+| Method | Endpoint | Açıklama | Auth |
+|---|---|---|---|
+| POST | `/ingest` | Metni parçalara (800 karakter, 100 örtüşme) bölüp ChromaDB'ye kaydeder. Gövde: `{"text", "doc_id"}`. Aynı `doc_id` tekrar gönderilirse parçalar güncellenir | Evet |
+
+### Rate Limiting
+
+Her IP adresi 60 saniyede en fazla **10 istek** atabilir; aşılırsa `429` döner. `/health`, `/docs` ve `/openapi.json` bu sınırın dışındadır. Redis'e ulaşılamazsa sınırlama 30 saniyeliğine devre dışı kalır, istekler engellenmez ve durum loglanır.
+
+## 🧪 Testler
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+Testler harici servis gerektirmez: veritabanı olarak in-memory SQLite, Redis ve ChromaDB yerine sahte (fake) nesneler kullanılır. Her push ve pull request'te GitHub Actions üzerinde otomatik çalışır.
+
+| Dosya | Kapsam |
+|---|---|
+| `tests/test_auth.py` | Kayıt, JSON ve form (Swagger) ile login, hatalı giriş, tüm korumalı endpoint'lerin token'sız/geçersiz token'la `401` dönmesi, token ile ajan CRUD |
+| `tests/test_rate_limit.py` | 10 istekten sonra `429`, IP bazlı sayım, Redis kapalıyken isteklerin geçmesi ve Redis'in bekleme süresinde tekrar denenmemesi |
+| `tests/test_health.py` | `/health` yanıtı ve rate limit dışında tutulması |
+
+Ajan sohbeti (Ollama, Tavily, ChromaDB) henüz otomatik testlerle kapsanmıyor; bunlar için `scripts/` altındaki elle çalıştırılan deneme script'leri kullanılıyor.
+
+## 📁 Proje Yapısı
+
+```
+├── main.py               # FastAPI uygulaması, middleware'ler ve endpoint'ler
+├── core/                 # Ayarlar (.env okuma) ve logger
+├── auth/                 # Şifre hash'leme ve JWT
+├── models/, schemas.py   # SQLAlchemy modelleri ve Pydantic şemaları
+├── services/             # Ajan, RAG ingest, ChromaDB, rate limiter, kullanıcı ve geçmiş servisleri
+├── tests/                # pytest testleri
+├── k8s/                  # Kubernetes manifest'leri
+├── scripts/              # Elle çalıştırılan deneme script'leri (LLM, Tavily, ChromaDB)
+├── Dockerfile            # Multi-stage, non-root image
+└── docker-compose.yml
+```
+
+## 🗺️ Durum / Yol Haritası
+
+**Tamamlananlar ✅**
+
+- JWT kimlik doğrulama; ajan ve ingest endpoint'lerinin korunması
+- Ajan CRUD işlemleri ve PostgreSQL ile kalıcı ajan hafızası (LangGraph checkpointer)
+- 4 araçlı AIOps ajanı: yerel bilgi tabanı, web araması, çözümleri bilgi tabanına kaydetme
+- RAG ingest (ChromaDB)
+- Redis ile rate limiting (Redis kapalıyken istekleri engellemez)
+- Docker Compose ile tam konteynerize çalışma; multi-stage, non-root image ve healthcheck
+- kind + Cilium üzerinde temel Kubernetes deployment'ı
+- Auth, rate limiting ve health için pytest testleri ve GitHub Actions CI
+
+**Planlananlar 🔜**
+
+- **Dinamik Agent-per-Pod:** Her ajan için Kubernetes API üzerinden, kaynak kullanımına göre boyutlandırılan pod'ların dinamik olarak oluşturulması
+- **Prometheus metrikleri:** `/metrics` endpoint'i (istek sayısı/süresi, ajan çağrıları, araç kullanımı) ve Grafana panoları
+- **Gerçek log toplama:** `fetch_service_logs` aracının Kubernetes API'den gerçek pod loglarını okuması
+- **Sohbet geçmişi:** Geçmiş endpoint'inin tüm konuşmayı LangGraph checkpointer'dan okuması
+- **Dosya yükleme:** `/ingest` için txt/pdf dosya yükleme desteği
+- **Asenkron ajan çalıştırma:** Uzun süren ajan çağrılarının kuyruk (Celery) üzerinden çalıştırılması
+- **Kubernetes sağlamlaştırma:** PersistentVolume, liveness/readiness probe'ları, PostgreSQL şifresinin Secret'a taşınması
+- **Veritabanı migration'ları:** Alembic
 
 ---
-
-## 📡 Temel API Endpoint'leri
-
-Tüm endpoint'leri interaktif olarak denemek için uygulama çalıştıktan sonra `http://localhost:8000/docs` (Swagger UI) adresine gidebilirsiniz.
-
-### 🤖 AI Agent İşlemleri
-| Method | Endpoint                           | Açıklama                                   | Auth |
-|---------|-----------------------------------|----------|---------------------------------|------|
-| POST    | `/agents`                         | Yeni bir LangGraph ajanı oluştur | Evet    |      |
-| GET     | `/agents`                         | Mevcut ajanları listele | Evet             |      |
-| POST    | `/agents/{id}/chat`               | Ajana mesaj gönder (RAG/Tavily tetiklenir) | Evet |
-| GET     | `/agents/{id}/history/{thread_id}`| Ajanın spesifik konuşma geçmişini getir    | Evet |
-| DELETE  | `/agents/{id}`                    | Ajanı sistemden sil                        | Evet |
-
-### 📚 RAG & Veri Kaynağı
-| Method | Endpoint | Açıklama                                                    | Auth |
-|--------|----------|-------------------------------------------------------------|------|
-| POST | `/ingest`  | Döküman (txt/pdf) yükle ve ChromaDB'ye vektör olarak kaydet | Evet |
-
-### 🔐 Sistem & Auth
-| Method | Endpoint   | Açıklama                                           | Auth  |
-|--------|------------|----------------------------------------------------|-------|
-| GET    | `/health`  | Sistem sağlık kontrolü (K8s Liveness Probe uyumlu) | Hayır |
-| POST   | `/register`| Yeni kullanıcı kaydı                               | Hayır |
-| POST   | `/login`   | JWT token al | Hayır                               |       |
-
----
-*Bu proje, otonom agent mimarileri ve kaynak-farkındalıklı (resource-aware) Kubernetes deployment tez çalışmaları kapsamında geliştirilmektedir.*
+*Bu proje, otonom ajan mimarileri ve kaynak-farkındalıklı (resource-aware) Kubernetes deployment tez çalışması kapsamında geliştirilmektedir.*

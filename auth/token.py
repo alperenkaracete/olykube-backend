@@ -5,6 +5,7 @@ from fastapi import Depends, HTTPException
 from services.user_service import get_user_by_email
 from database import SessionLocal
 from sqlalchemy.orm import Session
+from core.config import SECRET_KEY
 
 def get_db():
     db = SessionLocal()
@@ -13,7 +14,6 @@ def get_db():
     finally:
         db.close()
 
-SECRET_KEY = "gizli-anahtar"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 

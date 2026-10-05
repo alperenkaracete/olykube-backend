@@ -5,10 +5,12 @@ from auth.hashing import hash_password, verify_password
 from auth.token import create_access_token
 from auth.token import get_current_user
 from fastapi import Request
-from services.agents_service import run_agent_chat
+from services.agents_service import run_olykube_agent
 from services.chat_history_service import save_chat_history, get_chat_history
 from services.rate_limiter import check_rate_limit
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+from pydantic import ValidationError
 from core.logger import logger
 from services.ingest_service import ingest_document
 import time
@@ -25,7 +27,7 @@ from database import engine, SessionLocal
 
 # 1. BÜYÜK AN: Tabloları Yaratma Komutu
 # Bu satır, models.py içindeki sınıfları okur ve PostgreSQL'e gidip 
-# "Eğer 'todos' tablosu yoksa hemen CREATE TABLE ile yarat" der.
+# "Eğer tablolar (users, agents, ...) yoksa hemen CREATE TABLE ile yarat" der.
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
@@ -69,42 +71,6 @@ async def rate_limit_middleware(request: Request, call_next):
     response = await call_next(request)
     return response
 
-# Test için basit bir kök dizin
-@app.get("/")
-def read_root():
-    return {"message": "Veritabanı bağlantısı başarılı ve fabrika çalışıyor!"}
-
-@app.post("/todos/", response_model=schemas.TodoResponse)
-def create_todo(todo: schemas.TodoCreate, db: Session = Depends(get_db)):
-    # 1. Kullanıcıdan gelen tertemiz Pydantic verisini, SQLAlchemy veritabanı objesine çevir
-    db_todo = models.Todo(title=todo.title, description=todo.description)
-    # 2. Objekti veritabanı oturumuna ekle (Henüz diske yazılmadı, RAM'de bekliyor)
-    db.add(db_todo)
-    # 3. Değişiklikleri onayla ve kalıcı olarak diske (PostgreSQL) yaz! (C++'taki fflush veya commit gibi)
-    db.commit()
-    # 4. Veritabanının atadığı yeni ID'yi almak için objeyi yenile
-    db.refresh(db_todo)
-    # 5. Kaydedilen veriyi kullanıcıya geri döndür
-    return db_todo
-
-@app.get("/todos/", response_model=list[schemas.TodoResponse])
-def read_todos(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    # Veritabanına "Bana Todo tablosundaki tüm kayıtları getir" diyoruz.
-    # offset(skip) ve limit(limit) kısımları binlerce veri olduğunda RAM'in çökmesini engeller.
-    todos = db.query(models.Todo).offset(skip).limit(limit).all()
-    return todos  
-    
-@app.get("/todos/{todo_id}", response_model=schemas.TodoResponse)
-def read_todo(todo_id: int, db: Session = Depends(get_db)):
-    # SQL karşılığı: SELECT * FROM todos WHERE id = todo_id LIMIT 1;
-    todo = db.query(models.Todo).filter(models.Todo.id == todo_id).first()
-    
-    # Eğer veritabanında o ID'ye ait bir kayıt yoksa (pointer null dönüyorsa)
-    if todo is None:
-        raise HTTPException(status_code=404, detail="Böyle bir Todo bulunamadı!")
-        
-    return todo    
-
 @app.post("/register")
 def register(user: UserRegister, db: Session = Depends(get_db)):
     existing_user = get_user_by_email(db, user.email)
@@ -118,8 +84,23 @@ def register(user: UserRegister, db: Session = Depends(get_db)):
         db.refresh(db_user)
         return db_user
 
+async def get_login_credentials(request: Request) -> UserRegister:
+    # JSON: {"email", "password"} — API istemcileri için
+    # Form: username/password — Swagger'daki "Authorize" butonu (OAuth2 password flow) bunu gönderir
+    if request.headers.get("content-type", "").startswith("application/json"):
+        data = await request.json()
+        if not isinstance(data, dict):
+            data = {}
+    else:
+        form = await request.form()
+        data = {"email": form.get("username"), "password": form.get("password")}
+    try:
+        return UserRegister(**data)
+    except ValidationError as e:
+        raise RequestValidationError(e.errors(include_url=False, include_context=False))
+
 @app.post("/login")
-def login(user: UserRegister, db: Session = Depends(get_db)):
+def login(user: UserRegister = Depends(get_login_credentials), db: Session = Depends(get_db)):
     existing_user = get_user_by_email(db, user.email)
     if not existing_user:
         raise HTTPException(status_code=404, detail="Email bulunamadı")
@@ -134,7 +115,7 @@ def login(user: UserRegister, db: Session = Depends(get_db)):
 def protected(current_user = Depends(get_current_user)):
     return {"email": current_user}
 
-@app.post("/agents/", response_model = schemas.AgentCreate)
+@app.post("/agents/", response_model = schemas.AgentCreate, dependencies=[Depends(get_current_user)])
 def create_agents(agent : schemas.AgentCreate,db: Session = Depends(get_db)):
     db_agent = models.Agent(**agent.model_dump())
     try:
@@ -154,7 +135,7 @@ def create_agents(agent : schemas.AgentCreate,db: Session = Depends(get_db)):
             detail=f"'{agent.name}' isminde bir ajan zaten mevcut. Lütfen farklı bir isim seçin."
         )
 
-@app.get("/agents/name/{agent_name}", response_model=schemas.AgentResponse)
+@app.get("/agents/name/{agent_name}", response_model=schemas.AgentResponse, dependencies=[Depends(get_current_user)])
 def get_agent_by_name(agent_name: str, db: Session = Depends(get_db)):
     db_agent = db.query(models.Agent).filter(models.Agent.name == agent_name).first()
     
@@ -163,7 +144,7 @@ def get_agent_by_name(agent_name: str, db: Session = Depends(get_db)):
         
     return db_agent
 
-@app.get("/agents/{agent_id}", response_model=schemas.AgentResponse)
+@app.get("/agents/{agent_id}", response_model=schemas.AgentResponse, dependencies=[Depends(get_current_user)])
 def get_agent_by_id(agent_id: int, db: Session = Depends(get_db)):
     db_agent = db.query(models.Agent).filter(models.Agent.id == agent_id).first()
     
@@ -172,12 +153,12 @@ def get_agent_by_id(agent_id: int, db: Session = Depends(get_db)):
         
     return db_agent
 
-@app.get("/agents/", response_model=list[schemas.AgentResponse])
+@app.get("/agents/", response_model=list[schemas.AgentResponse], dependencies=[Depends(get_current_user)])
 def get_all_agents(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
     agents = db.query(models.Agent).offset(skip).limit(limit).all()
     return agents 
 
-@app.delete("/agents/")
+@app.delete("/agents/", dependencies=[Depends(get_current_user)])
 def delete_agent(agent_name: str, db: Session = Depends(get_db)):
     # 1. Önce silinecek hedefi ismine göre bul
     db_agent = db.query(models.Agent).filter(models.Agent.name == agent_name).first()
@@ -192,7 +173,7 @@ def delete_agent(agent_name: str, db: Session = Depends(get_db)):
     
     return {"message": f"'{db_agent.name}' isimli ajan (ID: {db_agent.id}) sistemden başarıyla silindi."}
 
-@app.post("/agents/{agent_id}/chat")
+@app.post("/agents/{agent_id}/chat", dependencies=[Depends(get_current_user)])
 async def chat_with_agent(agent_id: int, request: schemas.ChatRequest, db: Session = Depends(get_db)):
     # 1. Veritabanından ajanı çek (Ajanın kimliğini burada öğreniyoruz)
     db_agent = db.query(models.Agent).filter(models.Agent.id == agent_id).first()
@@ -202,11 +183,11 @@ async def chat_with_agent(agent_id: int, request: schemas.ChatRequest, db: Sessi
     try:
         # 2. Servisi çağır ve yanıtı bekle
         # (Şu an senkron bekliyoruz, 10. haftada Celery ile bunu asenkrona çekeceğiz)
-        response_content = await run_agent_chat(
-            model_name=db_agent.model_name,
-            system_prompt=db_agent.system_prompt,
+        result = await run_olykube_agent(
             user_message=request.message,
-            thread_id=request.thread_id
+            thread_id=request.thread_id,
+            model_name=db_agent.model_name,
+            system_prompt=db_agent.system_prompt
         )
         # Geçmişi kaydet
         save_chat_history(
@@ -215,13 +196,19 @@ async def chat_with_agent(agent_id: int, request: schemas.ChatRequest, db: Sessi
             thread_id=request.thread_id,
             messages=[
                 {"role": "user", "content": request.message},
-                {"role": "assistant", "content": response_content}
+                {"role": "assistant", "content": result["reply"]}
             ]
-        )        
+        )
         return {
             "agent_name": db_agent.name,
-            "response": response_content
+            "response": result["reply"],
+            "actions_taken": result["actions_taken"],
+            "cited_sources": result["cited_sources"],
+            "new_knowledge_saved": result["new_knowledge_saved"]
         }
+    except HTTPException:
+        # Ollama kapalıyken dönen 503'ü 500'e çevirmeden olduğu gibi ilet
+        raise
     except Exception as e:
         # Yapay zeka tarafında oluşabilecek hataları yakalıyoruz
         print("--- KRİTİK HATA DETAYI ---")
@@ -229,12 +216,12 @@ async def chat_with_agent(agent_id: int, request: schemas.ChatRequest, db: Sessi
         print("--------------------------")
         raise HTTPException(status_code=500, detail=f"Ajan yanıt verirken bir hata oluştu: {str(e)}")
     
-@app.post("/ingest")
+@app.post("/ingest", dependencies=[Depends(get_current_user)])
 def ingest(request: schemas.IngestRequest):
     chunk_count = ingest_document(request.text, request.doc_id)
     return {"message": f"{chunk_count} chunk kaydedildi.", "doc_id": request.doc_id}    
 
-@app.get("/agents/{agent_id}/history/{thread_id}")
+@app.get("/agents/{agent_id}/history/{thread_id}", dependencies=[Depends(get_current_user)])
 def get_history(agent_id: int, thread_id: str, db: Session = Depends(get_db)):
     history = get_chat_history(db, agent_id, thread_id)
     

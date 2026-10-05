@@ -1,12 +1,11 @@
-import os
 from langchain_ollama import ChatOllama
 from langchain_community.tools.tavily_search import TavilySearchResults
 from langchain.agents import create_agent
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.messages import HumanMessage
 
-# Güvenlik: Tavily API anahtarını sisteme tanıtıyoruz
-os.environ["TAVILY_API_KEY"] = "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"
+# TAVILY_API_KEY ve OLLAMA_BASE_URL .env'den yüklenir
+from core.config import OLLAMA_BASE_URL
 
 # 1. Ajanın Kullanacağı Araçları (Tools) Tanımla
 # max_results=2: Ajan internette arama yaptığında en iyi 2 siteyi okusun (Token tasarrufu)
@@ -16,7 +15,7 @@ tools = [search_tool]
 # 2. Motoru (Beyni) Tanımla
 llm = ChatOllama(
     model="qwen3.5:9b", # Qwen, araç kullanma (Tool Calling) konusunda çok zekidir
-    base_url="http://192.168.1.13:11434"
+    base_url=OLLAMA_BASE_URL
 )
 
 # 3. LangGraph ReAct Ajanını Derle (Sihir Burada Gerçekleşiyor)

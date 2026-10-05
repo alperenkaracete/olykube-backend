@@ -1,0 +1,6 @@
+# kind cluster'ı varsayılan CNI olmadan kurar (Cilium sonradan yüklenir)
+# kind create cluster --config k8s/kind-cilium-config.yaml
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+networking:
+  disableDefaultCNI: true

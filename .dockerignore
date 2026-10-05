@@ -1,0 +1,15 @@
+venv/
+__pycache__/
+*.pyc
+.env
+.git/
+.github/
+chroma_db/
+*.log
+tests/
+scripts/
+k8s/
+Dockerfile
+.dockerignore
+docker-compose.yml
+Todo

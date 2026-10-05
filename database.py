@@ -1,10 +1,8 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
-import os
 
-# 1. Bağlantı Cümlesi (Connection String)
-# Şifremi 1234, kullanıcıyı postgres ve DB adını olykube olarak ayarlamıştık.
-SQLALCHEMY_DATABASE_URL = os.getenv("SQLALCHEMY_DATABASE_URL")
+# 1. Bağlantı Cümlesi (Connection String) - .env'deki SQLALCHEMY_DATABASE_URL
+from core.config import SQLALCHEMY_DATABASE_URL
 
 # 2. Motor (Engine) - Veritabanı ile Python arasındaki fiziksel köprü (TCP bağlantı havuzu)
 engine = create_engine(SQLALCHEMY_DATABASE_URL)

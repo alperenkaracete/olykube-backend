@@ -2,19 +2,6 @@ from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional
 
-# Kullanıcının bize POST yaparken göndermesine İZİN VERDİĞİMİZ alanlar
-class TodoCreate(BaseModel):
-    title: str
-    description: str | None = None
-    
-# Veritabanından okuyup dışarıya (GET) DÖNDÜRECEĞİMİZ alanlar
-class TodoResponse(TodoCreate):
-    id: int
-    completed: bool
-
-    class Config:
-        from_attributes = True # Bu sihirli satır, Pydantic'in SQLAlchemy objesini anlamasını sağlar
-
 # 1. Ortak Alanlar (Hem girişte hem çıkışta olanlar)
 class AgentBase(BaseModel):
     name: str
