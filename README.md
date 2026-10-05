@@ -164,8 +164,8 @@ cilium status --wait
 **2. API image'ını build edip cluster'a yükleyin.** Tag, `k8s/api-deployment.yaml` içindeki `image` alanıyla aynı olmalıdır:
 
 ```bash
-docker build -t olykube-api:v3 .
-kind load docker-image olykube-api:v3
+docker build -t olykube-api:v4 .
+kind load docker-image olykube-api:v4
 ```
 
 **3. Secret'ları oluşturun.** Şifreler ve anahtarlar repoda tutulmaz; iki Secret elle oluşturulur.

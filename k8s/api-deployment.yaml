@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
       - name: olykube-container
-        image: olykube-api:v3
+        image: olykube-api:v4
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8000
