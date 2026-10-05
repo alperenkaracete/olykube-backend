@@ -15,10 +15,10 @@ env/
 
 # Todo
 Todo
-.dockerignore
 .env
 
 # Veritabanı ve Önbellek Hacimleri (Eğer lokalde tutuluyorsa)
+chroma_db/
 chroma_cache/
 local_chroma_data/
 postgres_data/
