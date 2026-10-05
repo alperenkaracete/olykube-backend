@@ -2,6 +2,8 @@
 
 [![Tests](https://github.com/alperenkaracete/olykube-backend/actions/workflows/tests.yml/badge.svg)](https://github.com/alperenkaracete/olykube-backend/actions/workflows/tests.yml)
 
+> **What is this?** OlyKube is the backend of an LLM-based AIOps agent: a LangGraph ReAct agent running on a local model (Ollama) diagnoses service errors by searching a ChromaDB knowledge base and the web (Tavily), then saves the solutions it finds so the same error can be solved locally next time. It is built with FastAPI, PostgreSQL (users, agents and persistent agent memory), Redis rate limiting and JWT auth, and runs with Docker Compose or on Kubernetes (kind + Cilium). Dynamic Agent-per-Pod scheduling on Kubernetes and Prometheus metrics are planned as part of an ongoing thesis project and are not implemented yet. The rest of this README is in Turkish.
+
 Otonom ajanlar ve AIOps süreçleri için geliştirilen, LangGraph ve RAG (Retrieval-Augmented Generation) destekli, konteynerize bir yapay zeka backend servisi.
 
 Ajanlar yerel LLM'ler (Ollama) üzerinde çalışır; hataları teşhis etmek için yerel bilgi tabanında (ChromaDB) ve internette (Tavily) arama yapar, çözdükleri hataları bilgi tabanına geri yazarak zamanla "öğrenir". Uzun vadeli hedef, Kubernetes üzerinde her ajan için dinamik ve kaynak-farkındalıklı pod'lar (Agent-per-Pod) oluşturmaktır; bkz. [Durum / Yol Haritası](#-durum--yol-haritası).
@@ -17,6 +19,37 @@ Ajanlar yerel LLM'ler (Ollama) üzerinde çalışır; hataları teşhis etmek i�
 * **Güvenlik:** JWT (OAuth2 password flow), bcrypt, Pydantic doğrulama
 
 ## 🏗️ Mimari
+
+```mermaid
+flowchart LR
+    client(["İstemci / Swagger UI"]) -->|"HTTP + JWT"| api
+
+    subgraph stack["Docker Compose / Kubernetes"]
+        api["olykube-api<br/>FastAPI + LangGraph"]
+        db[("olykube-db<br/>PostgreSQL")]
+        redis[("olykube-redis<br/>Redis")]
+        chroma[("olykube-chromadb<br/>ChromaDB")]
+    end
+
+    subgraph tools["Ajan araçları"]
+        logs["fetch_service_logs<br/>(şimdilik mock)"]
+        kb["search_knowledge_base"]
+        web["search_web_for_error"]
+        save["save_error_solution"]
+    end
+
+    ollama["Ollama<br/>(host makinede)"]
+    tavily["Tavily API"]
+
+    api -->|"rate limit"| redis
+    api -->|"kullanıcılar, ajanlar,<br/>ajan hafızası"| db
+    api -->|"/ingest"| chroma
+    api -->|"LLM çağrıları"| ollama
+    api -.->|"ReAct döngüsü"| tools
+    kb -->|"arama"| chroma
+    save -->|"çözümü kaydet"| chroma
+    web --> tavily
+```
 
 | Servis | Görev |
 |---|---|
@@ -135,7 +168,18 @@ docker build -t olykube-api:v3 .
 kind load docker-image olykube-api:v3
 ```
 
-**3. Ortam değişkenlerini Secret olarak oluşturun.** API pod'u tüm değişkenleri `olykube-env` Secret'ından alır. Cluster içi için ayrı bir env dosyası hazırlayın (örn. `.env.k8s`, git'e eklemeyin); host adları Service adlarıdır:
+**3. Secret'ları oluşturun.** Şifreler ve anahtarlar repoda tutulmaz; iki Secret elle oluşturulur.
+
+PostgreSQL şifresi (`olykube-db`): `db` Deployment'ı şifreyi bu Secret'tan okur. Şifreyi komut satırına yazmak yerine sorarak alın, böylece shell geçmişinde kalmaz:
+
+```bash
+read -rsp "PostgreSQL şifresi: " DB_PASSWORD; echo
+kubectl create secret generic olykube-db --from-literal=POSTGRES_PASSWORD="$DB_PASSWORD"
+```
+
+> PostgreSQL şifreyi yalnızca veritabanı ilk kez oluşturulurken uygular. Şifreyi sonradan değiştirirseniz `db` pod'unun verisini sıfırlamanız ya da şifreyi veritabanında da (`ALTER USER`) güncellemeniz gerekir.
+
+API ortam değişkenleri (`olykube-env`): API pod'u tüm değişkenleri bu Secret'tan alır. Cluster içi için ayrı bir env dosyası hazırlayın (örn. `.env.k8s`, git'e eklemeyin); host adları Service adlarıdır ve veritabanı şifresi yukarıdakiyle aynı olmalıdır:
 
 ```ini
 SQLALCHEMY_DATABASE_URL=postgresql://postgres:<şifre>@db:5432/olykube
@@ -158,7 +202,7 @@ kubectl apply -f k8s/api-deployment.yaml
 kubectl port-forward svc/olykube-api-service 8000:80
 ```
 
-> **Bilinen kısıtlar:** Manifest'lerde henüz PersistentVolume yoktur (pod yeniden başlarsa PostgreSQL ve ChromaDB verisi kaybolur), liveness/readiness probe tanımlı değildir ve PostgreSQL şifresi `infrastructure-deployment.yaml` içinde düz metindir. Bunlar yol haritasındadır.
+> **Bilinen kısıtlar:** Manifest'lerde henüz PersistentVolume yoktur (pod yeniden başlarsa PostgreSQL ve ChromaDB verisi kaybolur), ve liveness/readiness probe tanımlı değildir. Bunlar yol haritasındadır.
 
 ## 📡 API Endpoint'leri
 
@@ -248,7 +292,7 @@ Ajan sohbeti (Ollama, Tavily, ChromaDB) henüz otomatik testlerle kapsanmıyor; 
 - **Sohbet geçmişi:** Geçmiş endpoint'inin tüm konuşmayı LangGraph checkpointer'dan okuması
 - **Dosya yükleme:** `/ingest` için txt/pdf dosya yükleme desteği
 - **Asenkron ajan çalıştırma:** Uzun süren ajan çağrılarının kuyruk (Celery) üzerinden çalıştırılması
-- **Kubernetes sağlamlaştırma:** PersistentVolume, liveness/readiness probe'ları, PostgreSQL şifresinin Secret'a taşınması
+- **Kubernetes sağlamlaştırma:** PersistentVolume, liveness/readiness probe'ları
 - **Veritabanı migration'ları:** Alembic
 
 ---
