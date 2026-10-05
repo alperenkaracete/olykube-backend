@@ -16,6 +16,8 @@ env/
 # Todo
 Todo
 .env
+.env.*
+!.env.example
 
 # Veritabanı ve Önbellek Hacimleri (Eğer lokalde tutuluyorsa)
 chroma_db/

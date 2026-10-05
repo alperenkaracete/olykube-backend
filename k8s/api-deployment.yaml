@@ -14,9 +14,12 @@ spec:
       labels:
         app: olykube-api
     spec:
+      # K8s her Service için REDIS_PORT=tcp://... gibi değişkenler ekler; bu, uygulamanın
+      # REDIS_PORT ayarıyla çakışır. Servislere zaten DNS adlarıyla (redis, db, chromadb) ulaşılıyor.
+      enableServiceLinks: false
       containers:
       - name: olykube-container
-        image: olykube-api:v3
+        image: olykube-api:v5
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8000

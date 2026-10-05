@@ -17,6 +17,8 @@ spec:
       containers:
       - name: chromadb
         image: chromadb/chroma:latest
+        # :latest varsayılan olarak her seferinde çekilir; kind load ile yüklenen image'ı kullan
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8000
 ---

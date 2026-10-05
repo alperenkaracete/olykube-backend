@@ -48,8 +48,6 @@ services:
     # WSL/Docker Bridge üzerinden host'taki Ollama'ya ulaşmak için:
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    volumes:
-      - chroma_cache:/root/.cache/chroma   
 
   chromadb:
     image: chromadb/chroma:latest
@@ -69,4 +67,3 @@ networks:
 volumes:
   postgres_data:
   chromadb_data:
-  chroma_cache:
