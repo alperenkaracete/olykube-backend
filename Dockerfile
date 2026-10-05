@@ -35,14 +35,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Uygulama kodlarını kopyala
-COPY . .
-
 # Güvenlik best-practice: Konteyneri root yetkileriyle çalıştırma (K8s'te çok işine yarayacak)
-RUN useradd -m olykube_user
-
-RUN chown -R olykube_user:olykube_user /app
+# /app'in sahibi olmalı: uygulama olykube.log dosyasını buraya yazar
+RUN useradd -m olykube_user && chown olykube_user:olykube_user /app
 USER olykube_user
+
+# ChromaDB'nin varsayılan embedding modelini (all-MiniLM-L6-v2, ~80 MB) image'a göm.
+# Aksi halde her pod/konteyner ilk ingest/aramada modeli internetten indirir.
+# Kod kopyalanmadan önce çalışır: katman yalnızca requirements.txt veya script değişince yenilenir.
+COPY --chown=olykube_user:olykube_user docker/download_embedding_model.py /tmp/
+RUN python /tmp/download_embedding_model.py && rm /tmp/download_embedding_model.py
+
+# Uygulama kodlarını kopyala
+COPY --chown=olykube_user:olykube_user . .
 
 EXPOSE 8000
 # Her 30 saniyede bir, localhost:8000/health adresine istek at.
