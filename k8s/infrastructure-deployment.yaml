@@ -20,8 +20,12 @@ spec:
         env:
         - name: POSTGRES_USER
           value: "postgres"
+        # Şifre repoda tutulmaz; Secret'ın oluşturulması için README > Kubernetes bölümüne bakın
         - name: POSTGRES_PASSWORD
-          value: "1234"
+          valueFrom:
+            secretKeyRef:
+              name: olykube-db
+              key: POSTGRES_PASSWORD
         - name: POSTGRES_DB
           value: "olykube"
 ---
