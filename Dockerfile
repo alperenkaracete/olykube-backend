@@ -15,7 +15,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
-RUN pip install --no-cache-dir -r requirements.txt
+# Yavaş bağlantıda büyük paketlerin (onnxruntime, chromadb) indirmesi yarıda kalmasın
+RUN pip install --no-cache-dir --default-timeout=120 --retries 10 -r requirements.txt
 
 
 # ==========================================
